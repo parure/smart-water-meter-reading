@@ -1,0 +1,34 @@
+/**
+ * test SVN
+ * PRG
+ */
+package org.reader;
+
+import ij.ImagePlus;
+
+
+/**
+ * @author pauline ruegg-reymond
+ *
+ */
+public class Main {
+
+	/**
+	 * @param args
+	 */
+	public static void main(String[] args) {
+		/* TODO
+		 * Le meterType devrait être inclus dans l'exif de l'image, donc ça devrait suffire d'avoir le chemin de l'image.
+		 * On peut aussi imaginer de passer le chemin de la file à scruter en paramètre de l'application.
+		 */
+		
+		String meterType = "GWF_MTK";
+		String path = "images/chiffres/20120309-205837.jpg";
+		ImagePlus im = new ImagePlus(path);
+		RunnableProcess rp = new RunnableProcess(im, meterType);
+		Thread processthread = new Thread(rp);
+		processthread.start();
+		
+		while (processthread.getState() != Thread.State.TERMINATED){}
+	}
+}

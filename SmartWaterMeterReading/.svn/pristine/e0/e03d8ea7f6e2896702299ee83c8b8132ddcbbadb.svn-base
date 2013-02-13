@@ -1,0 +1,417 @@
+/**
+ * Copyright (C) 2013 pauline ruegg-reymond
+ * <pauline.ruegg.reymond@gmail.com>
+ * eauservice
+ * rue de Genève 36
+ * case postale 7416
+ * CH-1002 Lausanne
+ * 
+ * This file is part of SmartWaterMeterReading
+ * 
+ * SmartWaterMeterReading is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * SmartWaterMeterReading is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package org.recognizer;
+
+import ij.gui.PolygonRoi;
+import ij.gui.Roi;
+import ij.measure.ResultsTable;
+import ij.process.Blitter;
+import ij.process.ImageProcessor;
+
+import java.awt.Rectangle;
+
+/**
+ * @author pauline ruegg-reymond
+ * 
+ * Abstract class to perform operations on images.
+ * These operations are needed by methods of the class Recognizer.
+ *
+ */
+public abstract class Tools {
+	
+	public static int AFFINE_2D = 0;
+	public static int PERSPECTIVE = 1;
+	public static int MLS_AFFINE = 2;
+	public static int MLS_SIMILARITY = 3;
+	public static int MLS_RIGID = 4;
+	
+	
+	
+	/** Computes the deformation of one point.
+	 * @param p - interest points in template image.
+	 * @param q - corresponding interest points in processed image.
+	 * @param u - point of template image we want to find in processed image.
+	 * @param flag - indicates the method.
+	 * @return Position of point in processed image corresponding to 'u'.
+	 */
+	public static double[] correspondingPoint(double[][] p, double[][] q, double[] u, int flag) {
+		if (p.length != q.length || p[0].length != 2 || q[0].length != 2 || u.length != 2){
+			throw new IllegalArgumentException("p and q don't have the same length or the points are not 2d points.");
+		}
+		if (flag < 0 || flag > MLS_RIGID) flag = 0;
+		
+		//System.out.println("u = " + Arrays.toString(u));
+		
+		double[] v = {u[0], u[1]};
+		
+		
+		if (flag == AFFINE_2D) {
+			
+			if (p.length < 3) throw new IllegalArgumentException("Wrong number of interest points");
+			
+			v[0] -= p[0][0];
+			v[1] -= p[0][1];
+			
+			double[][] A = {{p[1][0] - p[0][0], p[2][0] - p[0][0]}, {p[1][1] - p[0][1], p[2][1] - p[0][1]}};
+			A = LinAlg.inv2(A);
+			double[][] B = {{q[1][0] - q[0][0], q[2][0] - q[0][0]}, {q[1][1] - q[0][1], q[2][1] - q[0][1]}};
+			A = LinAlg.matMult(B, A);
+			
+			v = LinAlg.matVectMult(A, v);
+			
+			v[0] += q[0][0];
+			v[1] += q[0][1];
+			
+		} else if (flag == PERSPECTIVE) {
+			
+			if (p.length < 4) throw new IllegalArgumentException("Wrong number of interest points");
+			
+			double[][] A = {{p[0][0], p[1][0], p[2][0]},
+					{p[0][1], p[1][1], p[2][1]},
+					{1, 1, 1}};
+			
+			double[][] C = LinAlg.inv3(A);
+			double[] c = {p[3][0], p[3][1], 1};
+			c = LinAlg.matVectMult(C, c);
+			C = LinAlg.diag(c);
+			A = LinAlg.matMult(A,C);
+			
+			double[][] B = {{q[0][0], q[1][0], q[2][0]},
+					{q[0][1], q[1][1], q[2][1]},
+					{1, 1, 1}};
+			C = LinAlg.inv3(B);
+			c[0] = q[3][0];
+			c[1] = q[3][1];
+			c[2] = 1;
+			c = LinAlg.matVectMult(C, c);
+			C = LinAlg.diag(c);
+			B = LinAlg.matMult(B,C);
+			B = LinAlg.inv3(B);
+			
+			double[] w = {v[0], v[1], 1};
+			w = LinAlg.matVectMult(B, w);
+			w = LinAlg.matVectMult(A, w);
+			v[0] = w[0]/w[2];
+			v[1] = w[1]/w[2];
+			
+		} else if (flag >= MLS_AFFINE && flag <= MLS_RIGID) {
+			
+			double[] pStar = {0, 0};
+			double[] qStar = {0, 0};
+			double[] w = new double[p.length];
+			double tmp = 0;
+			for (int i=0;i<p.length;i++) {
+				//q[i] = LinAlg.addVect(q[i], transl);
+				//q[i] = LinAlg.scalVectMult(scale, q[i]);
+				w[i] = (p[i][0] - u[0])*(p[i][0] - u[0]) + (p[i][1] - u[1])*(p[i][1] - u[1]);
+				w[i] = 1/w[i];
+				pStar[0] += w[i]*p[i][0];
+				pStar[1] += w[i]*p[i][1];
+				qStar[0] += w[i]*q[i][0];
+				qStar[1] += w[i]*q[i][1];
+				tmp += w[i];
+			}
+			pStar = LinAlg.scalVectMult(1/tmp, pStar);
+			qStar = LinAlg.scalVectMult(1/tmp, qStar);
+	
+			double[][] M = {{0,0},{0,0}};
+			
+			if (flag == MLS_AFFINE) {
+				double[][] N = {{0,0},{0,0}};
+				for (int i=0;i<p.length;i++) {
+					double p0 = p[i][0] - pStar[0];
+					double p1 = p[i][1] - pStar[1];
+					double q0 = q[i][0] - qStar[0];
+					double q1 = q[i][1] - qStar[1];
+					double[][] T = {{w[i]*p0*q0, w[i]*p0*q1}, {w[i]*p1*q0, w[i]*p1*q1}};
+					M = LinAlg.addMat(M, T);
+					double[][] S = {{w[i]*p0*p0, w[i]*p1*p0}, {w[i]*p0*p1, w[i]*p1*p1}};
+					N = LinAlg.addMat(N, S);
+				}
+				
+				N = LinAlg.inv2(N);
+				M = LinAlg.matMult(M, N);
+			} else if (flag == MLS_SIMILARITY) {
+				tmp = 0;
+				for (int i=0;i<p.length;i++) {
+					double p0 = p[i][0] - pStar[0];
+					double p1 = p[i][1] - pStar[1];
+					double q0 = q[i][0] - qStar[0];
+					double q1 = q[i][1] - qStar[1];
+					double[][] T = {{w[i]*(p0*q0 + p1*q1), w[i]*(p0*q1 - p1*q0)}, {w[i]*(p1*q0 - p0*q1), w[i]*(p1*q1 + p0*q0)}};
+					M = LinAlg.addMat(M, T);
+					tmp += w[i]*(p0*p0 + p1*p1);
+				}
+				M = LinAlg.scalMatMult(1/tmp, M);
+			} else if (flag == MLS_RIGID) {
+				tmp = 0;
+				double tmp2 = 0;
+				for (int i=0;i<p.length;i++) {
+					double p0 = p[i][0] - pStar[0];
+					double p1 = p[i][1] - pStar[1];
+					double q0 = q[i][0] - qStar[0];
+					double q1 = q[i][1] - qStar[1];
+					double[][] T = {{w[i]*(p0*q0 + p1*q1), w[i]*(p0*q1 - p1*q0)}, {w[i]*(p1*q0 - p0*q1), w[i]*(p1*q1 + p0*q0)}};
+					M = LinAlg.addMat(M, T);
+					tmp += w[i]*(p0*q0 + p1*q1);
+					tmp2 += w[i]*(p1*q0 - p0*q1);
+				}
+				tmp *= tmp;
+				tmp2 *= tmp2;
+				tmp += tmp2;
+				tmp = Math.sqrt(tmp);
+				M = LinAlg.scalMatMult(1/tmp, M);
+			}
+				
+			
+			v[0] -= pStar[0];
+			v[1] -= pStar[1];
+			v = LinAlg.matVectMult(M, v);
+			v = LinAlg.addVect(v, qStar);
+			
+			//v = LinAlg.scalVectMult(1/scale, v);
+			//v[0] -= transl[0];
+			//v[1] -= transl[1];
+		}
+		
+		//System.out.println("v = " + Arrays.toString(v));
+		return v;
+	}
+	
+	
+	
+	/** Sees if blobs pairwise overlap horizontally.
+	 * @param blobs - table describing the blobs.
+	 * @return Boolean array: blobs number i and j overlap if corresponding index is true.
+	 *  If j<i, corresponding index is j*L - (j+1)*j/2 + i-j-1]. If j>i, corresponding index is i*L - (i+1)*i/2 + j-i-1.
+	 */
+	public static boolean[] horizontalOverlap(ResultsTable blobs) {
+		int L = blobs.getCounter();
+		boolean[] res = new boolean[(L-1)*L/2];
+		
+		int l = 0;
+		for (int i=0;i<L;i++) {
+			double x1_i = blobs.getValueAsDouble(ResultsTable.ROI_X, i);
+			double x2_i = x1_i + blobs.getValueAsDouble(ResultsTable.ROI_WIDTH, i);
+			for (int j=i+1;j<L;j++) {
+				double x1_j = blobs.getValueAsDouble(ResultsTable.ROI_X, j);
+				double x2_j = x1_j + blobs.getValueAsDouble(ResultsTable.ROI_WIDTH, j);
+				res[l] = ((x1_i<=x1_j && x1_j<=x2_i) || (x1_i<=x2_j && x2_j<=x2_i) || (x1_j<=x1_i && x1_i<=x2_j) || (x1_j<=x2_i && x2_i<=x2_j));
+				l++;
+			}
+		}
+		
+		return res;
+	}
+	
+	
+	
+	
+	/**	Counts the number of non zero pixels on each row of a region of an image.
+	 * @param ip - image to treat.
+	 * @param x - x-coordinate of the region of interest.
+	 * @param y - y-coordinate of the region of interest.
+	 * @param width - width of the region of interest.
+	 * @param height - height of the region of interest.
+	 * @return The number of non zero pixels per row.
+	 */
+	public static int[] numOfPixPerRow(ImageProcessor ip, int x, int y, int width, int height) {
+		ImageProcessor ip2 = (ImageProcessor) ip.clone();
+		if (!ip2.isBinary() || ip2.isInvertedLut()) {
+			throw new IllegalArgumentException("Image should be binary.");
+		}
+		
+		int[] data = new int[height];
+		for (int j=0;j<height;j++) {
+			int[] data2 = new int[width];
+			ip2.getRow(x, y+j, data2, width);
+			for (int k=0;k<width;k++) {
+				if (data2[k]>0) data[j]++;
+			}
+		}
+		return data;
+	}
+
+	
+	
+	
+	/** Counts the number of non zero pixels on each column of a region of an image.
+	 * @param ip - image to treat.
+	 * @param x - x-coordinate of the region of interest.
+	 * @param y - y-coordinate of the region of interest.
+	 * @param width - width of the region of interest.
+	 * @param height - height of the region of interest.
+	 * @return The number of non zero pixels per column.
+	 */
+	public static int[] numOfPixPerCol(ImageProcessor ip, int x, int y, int width, int height) {
+		ImageProcessor ip2 = (ImageProcessor) ip.clone();
+		ip2.setRoi(x, y, width, height);
+		ip2 = ip2.crop();
+		ip2 = ip2.rotateRight();
+		return numOfPixPerRow(ip2,0,0,ip2.getWidth(),ip2.getHeight());
+	}
+	
+	
+	
+	
+	/**	Counts the number of non zero pixels on each parallel to a given line of a region of an image.
+	 * @param ip - image to treat.
+	 * @param x - x-coordinate of the region of interest.
+	 * @param y - y-coordinate of the region of interest.
+	 * @param width - width of the region of interest.
+	 * @param height - height of the region of interest.
+	 * @param angle - angle the parallel lines we are interested in form with horizontal (in degrees).
+	 * @return The number of non zero pixels per row.
+	 */
+	public static int[] numOfPixPerLine(ImageProcessor ip, int x, int y, int width, int height, double angle) {
+		ImageProcessor ip2 = (ImageProcessor) ip.clone();
+		ip2.setRoi(x, y, width, height);
+		ip2 = ip2.crop();
+		
+		ip2 = rotate(ip2, angle, true);
+		return numOfPixPerRow(ip2, 0, 0, ip2.getWidth(), ip2.getHeight());
+	}
+	
+	
+	
+	
+	/** Transforms a four-sided selection in an image into another quadilateral.
+	 * @param ip - image to process.
+	 * @param p0 - coordinates of an edge of the four-sided selection in original image. maps to q0.
+	 * @param p1 - coordinates of an edge of the four-sided selection in original image. maps to q1.
+	 * @param p2 - coordinates of an edge of the four-sided selection in original image. maps to q2.
+	 * @param p3 - coordinates of an edge of the four-sided selection in original image. maps to q3.
+	 * @param q0 - coordinates of an edge of the quadrilateral in destination image. maps to p0.
+	 * @param q1 - coordinates of an edge of the quadrilateral in destination image. maps to p1.
+	 * @param q2 - coordinates of an edge of the quadrilateral in destination image. maps to p2.
+	 * @param q3 - coordinates of an edge of the quadrilateral in destination image. maps to p3.
+	 * @return An image containing a bounding box of quadrilateral (q0, q1, q2, q3). Pixels outside the quadrilateral are not copied.
+	 */
+	public static ImageProcessor perspective(ImageProcessor ip, double[] p0, double[] p1, double[] p2, double[] p3, double[] q0, double[] q1, double[] q2, double[] q3) {
+		if (p0.length != 2 || p1.length != 2 || p2.length != 2 || p3.length != 2 || q0.length != 2 || q1.length != 2 || q2.length != 2 || q3.length != 2) {
+			throw new IllegalArgumentException("p's and q's should have length 2.");
+		}
+		double wMax = ip.getWidth() + 0.5;
+		double hMax = ip.getHeight() + 0.5;
+		if (p0[0] >= wMax || p1[0] >= wMax || p2[0] >= wMax || p3[0] >= wMax) {
+			throw new IllegalArgumentException("p's should be in the image.");
+		}
+		if (p0[0] <= -0.5 || p1[0] <= -0.5 || p2[0] <= -0.5 || p3[0] <= -0.5 || q0[0] <= -0.5 || q1[0] <= -0.5 || q2[0] <= -0.5 || q3[0] <= -0.5) {
+			throw new IllegalArgumentException("p's should be in the image and q's should be >0.");
+		}
+		if (p0[1] >= hMax || p1[1] >= hMax || p2[1] >= hMax || p3[1] >= hMax) {
+			throw new IllegalArgumentException("p's should be in the image.");
+		}
+		if (p0[1] <= -0.5 || p1[1] <= -0.5 || p2[1] <= -0.5 || p3[1] <= -0.5 || q0[1] <= -0.5 || q1[1] <= -0.5 || q2[1] <= -0.5 || q3[1] <= -0.5) {
+			throw new IllegalArgumentException("p's should be in the image and q's should be >0.");
+		}
+		
+		double[][] A = {{p0[0], p1[0], p2[0]},
+				{p0[1], p1[1], p2[1]},
+				{1, 1, 1}};
+		
+		double[][] C = LinAlg.inv3(A);
+		double[] c = {p3[0], p3[1], 1};
+		c = LinAlg.matVectMult(C, c);
+		C = LinAlg.diag(c);
+		A = LinAlg.matMult(A,C);
+		
+		double[][] B = {{q0[0], q1[0], q2[0]},
+				{q0[1], q1[1], q2[1]},
+				{1, 1, 1}};
+		C = LinAlg.inv3(B);
+		c[0] = q3[0];
+		c[1] = q3[1];
+		c[2] = 1;
+		c = LinAlg.matVectMult(C, c);
+		C = LinAlg.diag(c);
+		B = LinAlg.matMult(B,C);
+		B = LinAlg.inv3(B);
+		
+		float[] xpoints = {(float) q0[0], (float) q1[0], (float) q3[0], (float) q2[0]};
+		float[] ypoints = {(float) q0[1], (float) q1[1], (float) q3[1], (float) q2[1]};
+		PolygonRoi roi = new PolygonRoi(xpoints, ypoints, 4, Roi.POLYGON);
+		roi.setLocation(0, 0);
+		Rectangle boundingRect = roi.getBounds();
+		ImageProcessor ip2 = ip.createProcessor(boundingRect.width,  boundingRect.height);
+		
+		for (int i=0;i<boundingRect.width;i++) {
+			for (int j=0;j<boundingRect.height;j++) {
+				if (roi.contains(i, j)) {
+					double[] v = {(double) i, (double) j, 1};
+					v = LinAlg.matVectMult(B, v);
+					v = LinAlg.matVectMult(A, v);
+					double pix0 = v[0]/v[2];
+					double pix1 = v[1]/v[2];
+					int color = ip.getPixelInterpolated(pix0, pix1);
+					ip2.putPixel(i, j, color);
+				}
+			}
+		}
+		
+		return ip2;
+	}
+	
+	
+	
+	
+	/** Rotates the image by an angle of 'angle' degrees clockwise.
+	 * @param ip - contains the image to treat
+	 * @param angle - angle of rotation in degrees
+	 * @param enlarge - if set to true, dimensions of the rotated image are changed in order to contain the whole rotated image.
+	 * Otherwise, dimensions are kept the same as in the original image.
+	 * @return The rotated image
+	 */
+	public static ImageProcessor rotate(ImageProcessor ip, double angle, boolean enlarge) {
+		ImageProcessor ip2 = (ImageProcessor) ip.clone();
+		
+		if (!enlarge) {
+			ip2.rotate(angle);
+			return ip2;
+		}
+		
+		double angle2 = angle*Math.PI/180;
+		double dstWidth = Math.abs(ip2.getWidth()*Math.cos(angle2));
+		dstWidth += Math.abs(ip2.getHeight()*Math.sin(angle2));
+		dstWidth = Math.round(dstWidth);
+		dstWidth = Math.max(dstWidth, ip2.getWidth());
+		double dstHeight = Math.abs(ip2.getHeight()*Math.cos(angle2));
+		dstHeight += Math.abs(ip2.getWidth()*Math.sin(angle2));
+		dstHeight = Math.round(dstHeight);
+		dstHeight = Math.max(dstHeight,  ip2.getHeight());
+		ImageProcessor ip3 = ip2.createProcessor((int) dstWidth, (int) dstHeight);
+		double srcX = dstWidth/2.0;
+		srcX -= ip2.getWidth()/2.0;
+		srcX = Math.round(srcX);
+		double srcY = dstHeight/2.0;
+		srcY -= ip2.getHeight()/2.0;
+		srcY = Math.round(srcY);
+		ip3.setColor(0);
+		ip3.fill();
+		ip3.setBackgroundValue(0);//ip.getBackgroundValue());
+		ip3.copyBits(ip, (int) srcX, (int) srcY, Blitter.COPY);
+		ip3.rotate(angle);
+		return ip3;
+	}
+}

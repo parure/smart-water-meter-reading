@@ -1,0 +1,261 @@
+/**
+ * 
+ */
+package org.addtype;
+
+import ij.ImagePlus;
+import ij.ImageStack;
+import ij.gui.GenericDialog;
+import ij.gui.ImageCanvas;
+import ij.gui.ImageWindow;
+import ij.gui.MessageDialog;
+import ij.gui.Toolbar;
+import ij.gui.YesNoCancelDialog;
+import ij.measure.ResultsTable;
+import ij.process.ImageProcessor;
+
+import java.awt.TextField;
+
+import java.io.File;
+import java.util.LinkedList;
+import java.util.List;
+
+import javax.swing.JFileChooser;
+import javax.swing.filechooser.FileNameExtensionFilter;
+
+import org.encog.ml.data.MLDataPair;
+import org.encog.ml.data.MLDataSet;
+import org.encog.ml.data.basic.BasicMLData;
+import org.encog.ml.data.basic.BasicMLDataPair;
+import org.encog.ml.data.basic.BasicMLDataSet;
+import org.encog.ml.train.strategy.StopTrainingStrategy;
+import org.encog.neural.som.SOM;
+import org.encog.neural.som.training.clustercopy.SOMClusterCopyTraining;
+import org.recognizer.Recognizer;
+import org.recognizer.TypeSpec;
+
+/**
+ * @author pauline ruegg-reymond
+ *
+ */
+public abstract class GUI {
+	
+	
+	/** Displays a dialog box with a text field and returns its value.
+	 * @return the string typed in the text field.
+	 */
+	public static String name() {
+		GenericDialog gd = new GenericDialog("");
+		gd.addMessage("Entrez le nom du nouveau type de compteur");
+		gd.addStringField("Nom", "");
+		gd.showDialog();
+		if (gd.wasOKed()) {
+			String res = ((TextField) gd.getStringFields().firstElement()).getText();
+			if (res.equalsIgnoreCase("")) {
+				new MessageDialog(null, "Warning", "Veuillez entrer un nom.");
+				return name();
+			}
+			if (res.contains(" ")) {
+				new MessageDialog(null, "Warning", "Veuillez ne pas inclure d'espaces dans le nom.");
+				return name();
+			}
+			return res;
+		}
+		return null;
+	}
+	
+	
+	
+	/** Displays a file chooser and opens the image.
+	 * @return The image.
+	 */
+	public static ImagePlus chooseAndOpenImage() {
+		JFileChooser fc = new JFileChooser();
+		FileNameExtensionFilter filter = new FileNameExtensionFilter("JPG images", "jpg", "jpeg");
+		fc.setFileFilter(filter);
+		int returnVal = fc.showOpenDialog(fc.getParent());
+		if (returnVal != JFileChooser.APPROVE_OPTION) {
+			return null;
+		}
+		File file = fc.getSelectedFile();
+		String path = file.getAbsolutePath();
+		return new ImagePlus(path);
+	}
+	
+	
+	
+	/** Opens an image, computes some interest points on it and lets the user choose some others.
+	 * @return x and y coordinates of the points.
+	 */
+	public static double[][] interestPoints() {
+		new MessageDialog(null, "Instruction", "Choisissez une image sur laquelle prendre les mesures.\n Cette image ne doit être déformée le moins possible par la perspective.");
+		
+		ImagePlus im = chooseAndOpenImage();
+		if (im == null) return null;
+		
+		Recognizer r = new Recognizer();
+		ImageProcessor ip = im.getProcessor();
+		ImageProcessor ip_red = r.findRed(ip);
+		ResultsTable blobs =  r.findBlob(ip_red, 60);
+		blobs =  r.treatBlobs(ip_red,  blobs);
+		
+		ImageCanvas ic = im.getCanvas();
+		Toolbar toolbar = new Toolbar();
+		ImageWindow iw = new ImageWindow(im, ic);
+		
+		new MessageDialog(null, "Instruction", "Veuillez encadrer la partie contenant l'index en commençant en haut à gauche.");
+		
+		GUI_dialChooser dialChooser = new GUI_dialChooser();
+		Toolbar.addPlugInTool(dialChooser);
+		toolbar.setTool(dialChooser.getToolName());
+		
+		while(!dialChooser.canceled() && !dialChooser.next()) {}
+		
+		iw.close();
+		if (dialChooser.canceled()) {
+			return null;
+		}
+		
+		//int[][] points1 = centerChooser.getCoordinates();
+		double[][] points2 = dialChooser.getCoordinates();
+		double[][] res = new double[7][2];
+		/**for (int i=0;i<5;i++) {
+			//res[i] = points1[i];
+		}*/
+		res[0][0] = blobs.getValueAsDouble(ResultsTable.X_CENTER_OF_MASS, r.getTENTH());
+		res[0][1] = blobs.getValueAsDouble(ResultsTable.Y_CENTER_OF_MASS, r.getTENTH());
+		res[1][0] = blobs.getValueAsDouble(ResultsTable.X_CENTER_OF_MASS, r.getHUNDREDTH());
+		res[1][1] = blobs.getValueAsDouble(ResultsTable.Y_CENTER_OF_MASS, r.getHUNDREDTH());
+		res[2][0] = blobs.getValueAsDouble(ResultsTable.X_CENTER_OF_MASS, r.getTHOUSANDTH());
+		res[2][1] = blobs.getValueAsDouble(ResultsTable.Y_CENTER_OF_MASS, r.getTHOUSANDTH());
+		res[3][0] = blobs.getValueAsDouble(ResultsTable.X_CENTER_OF_MASS, r.getTENTHOUSANDTH());
+		res[3][1] = blobs.getValueAsDouble(ResultsTable.Y_CENTER_OF_MASS, r.getTENTHOUSANDTH());
+		res[4][0] = blobs.getValueAsDouble(ResultsTable.X_CENTER_OF_MASS, r.getMIDDLE());
+		res[4][1] = blobs.getValueAsDouble(ResultsTable.Y_CENTER_OF_MASS, r.getMIDDLE());
+		res[5] = points2[0];
+		res[6] = points2[1];
+		
+		return res;
+	}
+	
+	
+	
+	/** Displays a dialog box with two numerics fields and returns their value.
+	 * @param dialWidth - verification parameter: value of the first numeric field should not exceed 1/5 of it.
+	 * @param dialHeight - verification parameter: value of the second numeric field should not exceed it.
+	 * @return values entered.
+	 */
+	public static int[] charDims(double dialWidth, double dialHeight) {
+		GenericDialog gd = new GenericDialog("");
+		gd.addNumericField("Largeur d'un chiffre (en pixels)", 15, 0);
+		gd.addNumericField("Hauteur d'un chiffre (en pixels)", 34, 0);
+		gd.showDialog();
+		
+		if(gd.wasOKed()) {
+			int[] res = new int[2];
+			res[0] = (int) gd.getNextNumber();
+			res[1] = (int) gd.getNextNumber();
+			if (res[0] > dialWidth/5.0 || res[1] > dialHeight) {
+				new MessageDialog(null, "Warning", "Les dimensions ne sont pas compatibles avec les dimensions du cardan.");
+				return charDims(dialWidth, dialHeight);
+			}
+			return res;
+		}
+		
+		return null;
+	}
+	
+	
+	
+	/** Lets the user choose number templates on water meter pictures and computes the corresponding SOM.
+	 * @param type - contains coordinates of interest points used to process the original image.
+	 * @return the SOM.
+	 */
+	public static SOM primaryNetwork(TypeSpec type) {
+		List<MLDataPair> list = new LinkedList<MLDataPair>();
+		for (int i=0;i<10;i++) list.add(null);
+		boolean[] template = {false, false, false, false, false, false, false, false, false, false};
+		new MessageDialog(null, "Instruction", "Choisissez une image sur laquelle vous voulez sélectionner un chiffre comme modèle.");
+		
+		int rec = 0;
+		while (rec < 10) {
+			ImagePlus im = chooseAndOpenImage();
+			if (im == null) return null;
+			
+			Recognizer r = new Recognizer();
+			ImageProcessor ip = im.getProcessor();
+			ImageProcessor ip_red = r.findRed(ip);
+			ResultsTable blobs =  r.findBlob(ip_red, 60);
+			blobs =  r.treatBlobs(ip_red,  blobs);
+			ImageProcessor ip_dial = ip.createProcessor((int) type.getDialWidth(), (int) type.getDialHeight());
+			try {
+				ip_dial =  r.getDial(ip, blobs, type);
+			} catch (Exception e) {
+				new MessageDialog(null, "Warning", "Cette image n'a pas pu être traitée.");
+				continue;
+			}
+			ip_dial =  r.binarize(ip_dial);
+			blobs =  r.findBlob(ip_dial, 40);
+			List<int[]> order = r.preferredOrder(blobs);
+			ImageStack chars = r.getCharacters(ip_dial, blobs, type, order);
+			
+			for (int i=0; i<chars.getSize();i++) {
+				if (rec >= 10) break;
+				ImageProcessor ip2 = chars.getProcessor(i+1);
+				ImageWindow iw = new ImageWindow(new ImagePlus("", ip2));
+				iw.setVisible(true);
+				YesNoCancelDialog d = new YesNoCancelDialog(null, "", "Choisir ce chiffre comme modèle?");
+				if (d.yesPressed()) {
+					GenericDialog gd = new GenericDialog("");
+					gd.addMessage("Indiquez de quel chiffre il s'agit.");
+					gd.addNumericField("Chiffre", 0, 0);
+					gd.showDialog();
+					int num = (int) gd.getNextNumber();
+					if (num > 9 || num < 0) {
+						new MessageDialog(null, "Warning", "Veuillez indiquer un chiffre entre 0 et 9.");
+						i--;
+						iw.close();
+						continue;
+					}
+					if (template[num]) {
+						new MessageDialog(null, "Warning", "Ce chiffre est déjà utilisé.");
+						i--;
+						iw.close();
+						continue;
+					}
+					template[num] = true;
+					double[] data = new double[(int) type.getCharWidth()*(int) type.getCharHeight()];
+					for (int j=0;j<data.length;j++) {
+						data[i] = ip2.get(i);
+					}
+					double[] ideal = {num};
+					MLDataPair pair =  new BasicMLDataPair(new BasicMLData(data), new BasicMLData(ideal));
+					list.set(num, pair);
+					System.out.println(num);
+					rec++;
+				}
+				if (d.cancelPressed()) {
+					return null;
+				}
+				iw.close();
+			}
+		}
+		
+		MLDataSet trainingSet = new BasicMLDataSet(list);
+		SOM net = new SOM(trainingSet.getInputSize(), (int) trainingSet.getRecordCount());
+		net.reset();
+		SOMClusterCopyTraining train = new SOMClusterCopyTraining(net, trainingSet);
+		StopTrainingStrategy stop = new StopTrainingStrategy();
+		stop.init(train);
+		while (!stop.shouldStop()) {
+			train.iteration();
+			stop.postIteration();
+		}
+		return net;
+	}
+	
+	/* TODO
+	 * A second function to compute a better network from the primary net and a folder containing
+	 * a variety of water meter pictures.
+	 */
+}

@@ -1,0 +1,67 @@
+/**
+ * Copyright (C) 2013 pauline ruegg-reymond
+ * <pauline.ruegg.reymond@gmail.com>
+ * eauservice
+ * rue de Genève 36
+ * case postale 7416
+ * CH-1002 Lausanne
+ * 
+ * This file is part of SmartWaterMeterReading
+ * 
+ * SmartWaterMeterReading is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * 
+ * SmartWaterMeterReading is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package org.reader;
+
+import java.io.File;
+
+import ij.ImagePlus;
+import ij.gui.MessageDialog;
+
+
+/**
+ * @author pauline ruegg-reymond
+ *
+ */
+public class Main {
+
+	/**
+	 * @param args
+	 */
+	public static void main(String[] args) {
+		/* TODO
+		 * Le meterType devrait être inclus dans l'exif de l'image, donc ça devrait suffire d'avoir le chemin de l'image.
+		 * On peut aussi imaginer de passer le chemin de la file à scruter en paramètre de l'application.
+		 */
+		new MessageDialog(null, "Information", "Le programme va lire les images que vous avez placées dans le dossier images/tes/queue, les renommer par l'index trouvé et les déplacer dans le dossier images/tes/res");
+		
+		String meterType = "GWF_MTK";
+		String[] paths = (new File("images/test/queue")).list();
+		for (String path:paths) {
+			if (!path.contains("jpg")) continue;
+			ImagePlus im = new ImagePlus("images/test/queue/"+path);
+			RunnableProcess rp = new RunnableProcess(im, meterType);
+			Thread processthread = new Thread(rp);
+			processthread.start();
+			
+			while (processthread.getState() != Thread.State.TERMINATED){}
+			
+			String dstPath = Integer.toString(rp.getIndex());
+			
+			File src = new File("images/test/queue/"+path);
+			File dst = new File("images/test/res/"+dstPath+".jpg");
+			
+			src.renameTo(dst);
+		}
+	}
+}
